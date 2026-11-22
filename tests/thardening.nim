@@ -17,6 +17,7 @@ import
 import ../src/daemon/runtime_events
 import ../src/daemon/ipc_startup_runtime
 import ../src/daemon/tracked_child
+import ../src/daemon/process_handle
 from ../src/daemon/state import
   TriadDaemon, OutputManagementHeadRuntime, clearOutputCaptureSessions,
   consumeMaximizedAck, expectMaximizedAck, initTriadDaemon,
@@ -2231,3 +2232,11 @@ suite "runtime deadlines":
   test "unavailable timer cannot be armed":
     var source = initRuntimeEventSource()
     check not source.setTimer(10'i64)
+
+suite "injectable process handle":
+  test "fake handle reports controlled exit state":
+    let handle = newFakeProcessHandle(4242)
+    check handle.processID() == 4242
+    check handle.peekExitCode() == -1
+    handle.setFakeExitCode(7)
+    check handle.peekExitCode() == 7
