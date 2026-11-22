@@ -2155,8 +2155,8 @@ suite "tracked child state machine":
     var tracked = initTrackedChild(child, 0'i64, 250'i64)
     defer:
       if not tracked.process.isNil:
-        tracked.process.kill()
-        tracked.process.close()
+        tracked.process.killProcess()
+        tracked.process.closeProcessHandle()
     check not tracked.advanceTrackedChild(249'i64, 250'i64)
     check tracked.phase == TrackedChildPhase.Starting
     check not tracked.advanceTrackedChild(250'i64, 250'i64)
@@ -2177,8 +2177,8 @@ suite "tracked child state machine":
     var tracked = initTrackedChild(child, 0'i64, 250'i64)
     defer:
       if not tracked.process.isNil:
-        tracked.process.kill()
-        tracked.process.close()
+        tracked.process.killProcess()
+        tracked.process.closeProcessHandle()
     tracked.beginTermination(100'i64, 250'i64)
     check tracked.phase == TrackedChildPhase.Terminating
     check not tracked.advanceTrackedChild(349'i64, 250'i64)
@@ -2186,6 +2186,17 @@ suite "tracked child state machine":
     check not tracked.advanceTrackedChild(350'i64, 250'i64)
     check tracked.killSent
     check tracked.phase == TrackedChildPhase.Killing
+
+  test "fake process handle drives state transitions":
+    var tracked = initTrackedChild(newFakeProcessHandle(77), 0'i64, 250'i64)
+    check not tracked.advanceTrackedChild(249'i64, 250'i64)
+    check tracked.phase == TrackedChildPhase.Starting
+    check not tracked.advanceTrackedChild(250'i64, 250'i64)
+    check tracked.phase == TrackedChildPhase.Running
+    tracked.process.setFakeExitCode(9)
+    check tracked.advanceTrackedChild(251'i64, 250'i64)
+    check tracked.phase == TrackedChildPhase.Reaped
+    check tracked.exitCode == 9
 
 suite "detached process options":
   test "ordinary child runs in a separate process group":
@@ -2240,3 +2251,9 @@ suite "injectable process handle":
     check handle.peekExitCode() == -1
     handle.setFakeExitCode(7)
     check handle.peekExitCode() == 7
+
+  test "nil process is handled safely":
+    var handle = newProcessHandle(nil)
+    check handle == nil
+    check handle.processID() == -1
+    check handle.peekExitCode() == -1
