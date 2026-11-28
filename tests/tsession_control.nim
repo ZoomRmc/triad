@@ -1,21 +1,23 @@
-import std/[asyncdispatch, json, os, osproc, streams, strtabs, strutils, tempfiles, unittest]
+import
+  std/[asyncdispatch, json, os, osproc, streams, strtabs, strutils, tempfiles, unittest]
 from posix import kill, Pid, SIGTERM
 import ../src/utils/runtime_deadlines
-import ../src/session/[
-  logs, session_control, session_control_client, shell_manager, supervisor
-]
+import
+  ../src/session/
+    [logs, session_control, session_control_client, shell_manager, supervisor]
 
 if paramCount() == 1:
   case paramStr(1)
-  of "--test-supervisor": quit runSupervisor()
-  of "--test-shell-manager": quit runShellManager()
-  else: discard
+  of "--test-supervisor":
+    quit runSupervisor()
+  of "--test-shell-manager":
+    quit runShellManager()
+  else:
+    discard
 
 suite "session control protocol":
   test "round-trips a versioned message":
-    let line = encodeSessionControl(
-      SessionControlKind.SpawnStarted, %*{"pid": 4321}
-    )
+    let line = encodeSessionControl(SessionControlKind.SpawnStarted, %*{"pid": 4321})
     let decoded = decodeSessionControl(line)
     check decoded.ok
     check decoded.message.version == SessionControlProtocolVersion
@@ -69,20 +71,23 @@ suite "session claim records":
     writeFile(path, """{"claim_id":"claim-b"}""")
     check not sessionClaimHeld(claim)
 
-
 suite "supervised shell recovery":
   test "rapid shell-manager failures share the supervisor restart backoff":
     let dir = createTempDir("triad-shell-recovery-", "")
-    defer: removeDir(dir)
+    defer:
+      removeDir(dir)
     let fakeTriad = dir / "fake-triad"
     let restarts = dir / "restarts"
-    writeFile(fakeTriad, """#!/bin/sh
+    writeFile(
+      fakeTriad,
+      """#!/bin/sh
 if [ "$1" = shell-manager ]; then
     printf 'start\n' >> "$TRIAD_TEST_RESTARTS"
     exit 1
 fi
 exec sleep 30
-""")
+""",
+    )
     setFilePermissions(fakeTriad, {fpUserRead, fpUserWrite, fpUserExec})
     let env = newStringTable(modeCaseSensitive)
     for key, value in envPairs():
@@ -92,10 +97,13 @@ exec sleep 30
     env["TRIAD_TEST_RESTARTS"] = restarts
 
     let process = startProcess(
-      getAppFilename(), args = ["--test-supervisor"], env = env,
+      getAppFilename(),
+      args = ["--test-supervisor"],
+      env = env,
       options = {poStdErrToStdOut},
     )
-    defer: process.close()
+    defer:
+      process.close()
     var launches = 0
     let deadline = monotonicMs() + 10_000
     try:
@@ -116,16 +124,18 @@ exec sleep 30
     check output.contains("restarting session components in 1000 ms")
     check output.contains("restarting session components in 2000 ms")
 
-
   test "the manager acknowledges failed spawns and lets launched apps survive":
     let dir = createTempDir("triad-shell-app-", "")
-    defer: removeDir(dir)
+    defer:
+      removeDir(dir)
     let env = newStringTable(modeCaseSensitive)
     for key, value in envPairs():
       env[key] = value
     env["XDG_STATE_HOME"] = dir
     let manager = startProcess(
-      getAppFilename(), args = ["--test-shell-manager"], env = env,
+      getAppFilename(),
+      args = ["--test-shell-manager"],
+      env = env,
       options = {poParentStreams},
     )
     defer:
@@ -138,20 +148,24 @@ exec sleep 30
 
     let client = newSessionControlClient(dir / "triad" / "shell-manager.sock")
     let failed = waitFor client.requestSessionControl(
-      SessionControlKind.Spawn, SessionControlKind.SpawnStarted,
-      %*{"argv": [dir / "missing"]}, acceptError = true,
+      SessionControlKind.Spawn,
+      SessionControlKind.SpawnStarted,
+      %*{"argv": [dir / "missing"]},
+      acceptError = true,
     )
     require failed != nil
     check failed.hasKey("error")
 
     let ack = waitFor client.requestSessionControl(
-      SessionControlKind.Spawn, SessionControlKind.SpawnStarted,
+      SessionControlKind.Spawn,
+      SessionControlKind.SpawnStarted,
       %*{"argv": ["/bin/sleep", "15"]},
     )
     require ack != nil
     let pid = Pid(ack{"pid"}.getInt())
     require pid > 0
-    defer: discard kill(pid, SIGTERM)
+    defer:
+      discard kill(pid, SIGTERM)
 
     manager.terminate()
     check manager.waitForExit(3000) == 0
