@@ -1,10 +1,23 @@
 import
-  std/[asyncdispatch, json, os, osproc, streams, strtabs, strutils, tempfiles, unittest]
+  std/[
+    asyncdispatch, asyncnet, json, os, osproc, streams, strtabs, strutils, tempfiles,
+    unittest,
+  ]
+from std/nativesockets import AF_UNIX, SOCK_STREAM, IPPROTO_IP
 from posix import kill, Pid, SIGTERM
 import ../src/utils/runtime_deadlines
 import
   ../src/session/
     [logs, session_control, session_control_client, shell_manager, supervisor]
+
+proc runFakeDaemon(): int =
+  ## Stands in for the daemon: records the first IPC line, then exits cleanly.
+  let server = newAsyncSocket(AF_UNIX, SOCK_STREAM, IPPROTO_IP)
+  server.bindUnix(getEnv("XDG_RUNTIME_DIR") / "triad.sock")
+  server.listen()
+  let client = waitFor server.accept()
+  writeFile(getEnv("TRIAD_TEST_HANDOFF"), waitFor client.recvLine())
+  0
 
 if paramCount() == 1:
   case paramStr(1)
@@ -12,6 +25,8 @@ if paramCount() == 1:
     quit runSupervisor()
   of "--test-shell-manager":
     quit runShellManager()
+  of "--test-fake-daemon":
+    quit runFakeDaemon()
   else:
     discard
 
@@ -93,6 +108,8 @@ exec sleep 30
     for key, value in envPairs():
       env[key] = value
     env["XDG_STATE_HOME"] = dir
+    # Keep the supervisor away from a live session's IPC socket.
+    env["XDG_RUNTIME_DIR"] = dir
     env["TRIAD_BIN"] = fakeTriad
     env["TRIAD_TEST_RESTARTS"] = restarts
 
@@ -123,6 +140,60 @@ exec sleep 30
     check launches >= 3
     check output.contains("restarting session components in 1000 ms")
     check output.contains("restarting session components in 2000 ms")
+
+  test "a shell-manager exit lets the daemon save a restore point first":
+    let dir = createTempDir("triad-manager-handoff-", "")
+    defer:
+      removeDir(dir)
+    let fakeTriad = dir / "fake-triad"
+    let handoff = dir / "handoff"
+    writeFile(
+      fakeTriad,
+      """#!/bin/sh
+if [ "$1" = shell-manager ]; then
+    [ -e "$TRIAD_TEST_HANDOFF" ] && exec sleep 30
+    sleep 1
+    exit 1
+fi
+exec "$TRIAD_TEST_SELF" --test-fake-daemon
+""",
+    )
+    setFilePermissions(fakeTriad, {fpUserRead, fpUserWrite, fpUserExec})
+    let env = newStringTable(modeCaseSensitive)
+    for key, value in envPairs():
+      env[key] = value
+    env["XDG_STATE_HOME"] = dir
+    env["XDG_RUNTIME_DIR"] = dir
+    env["TRIAD_BIN"] = fakeTriad
+    env["TRIAD_TEST_SELF"] = getAppFilename()
+    env["TRIAD_TEST_HANDOFF"] = handoff
+
+    let process = startProcess(
+      getAppFilename(),
+      args = ["--test-supervisor"],
+      env = env,
+      options = {poStdErrToStdOut},
+    )
+    defer:
+      process.close()
+    let deadline = monotonicMs() + 10_000
+    try:
+      while monotonicMs() < deadline and process.peekExitCode() == -1:
+        if fileExists(handoff) and readFile(handoff).len > 0:
+          break
+        sleep(25)
+      sleep(200)
+    finally:
+      if process.peekExitCode() == -1:
+        process.terminate()
+        if process.waitForExit(4000) == -1:
+          process.kill()
+          discard process.waitForExit()
+    let output = process.outputStream().readAll()
+    check fileExists(handoff)
+    check readFile(handoff) == "triad-reload"
+    check output.contains("shell manager exited; restarting session components")
+    check not output.contains("did not hand off")
 
   test "the manager acknowledges failed spawns and lets launched apps survive":
     let dir = createTempDir("triad-shell-app-", "")

@@ -1,5 +1,6 @@
-import std/[os, osproc, posix, strutils]
+import std/[asyncdispatch, os, osproc, posix, strutils]
 import logs, process_io
+import ../ipc/socket
 import ../utils/runtime_deadlines
 
 var shutdownSignal {.volatile.}: cint
@@ -7,6 +8,7 @@ var shutdownSignal {.volatile.}: cint
 const
   ClaimLostStatus = -2
   ManagerLostStatus = -3
+  ManagerLostHandoffTimeoutMs = 5000
 
 proc sleepClaimAware(claim: SessionClaim, delayMs: int64): bool =
   let deadline = monotonicMs() + delayMs
@@ -39,6 +41,25 @@ proc daemonArgs(): seq[string] =
       putEnv("TRIAD_BEHAVIOR_LOG", "1")
     result.add("--dev-mode")
 
+proc requestDaemonHandoff(): bool =
+  try:
+    waitFor sendIpcMsg(triadSocketPath(), "triad-reload")
+    true
+  except CatchableError as e:
+    echo "triad-supervise: daemon handoff request failed: ", e.msg
+    false
+
+proc stopDaemonAfterManagerLoss(process: Process) =
+  # Ask the daemon to save a restore point and exit, as `triad-reload` does,
+  # so the restarted daemon keeps the window layout. Stop it if it doesn't.
+  if requestDaemonHandoff() and process.waitForExit(ManagerLostHandoffTimeoutMs) != -1:
+    return
+  echo "triad-supervise: daemon did not hand off; stopping it without a restore point"
+  process.terminate()
+  if process.waitForExit(3000) == -1:
+    process.kill()
+    discard process.waitForExit()
+
 proc waitForChild(process, shellManager: Process, claim: SessionClaim): int =
   while true:
     if shutdownSignal != 0:
@@ -50,10 +71,7 @@ proc waitForChild(process, shellManager: Process, claim: SessionClaim): int =
     let code = process.peekExitCode()
     if shellManager.peekExitCode() != -1:
       if code == -1:
-        process.terminate()
-        if process.waitForExit(3000) == -1:
-          process.kill()
-          discard process.waitForExit()
+        process.stopDaemonAfterManagerLoss()
       return ManagerLostStatus
     if code != -1:
       return code

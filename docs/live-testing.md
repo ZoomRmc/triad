@@ -146,8 +146,9 @@ Check the manager path in a live River session:
 - A failed startup command is logged, and later startup commands still run.
 - Killing `triad shell-manager` restarts the manager and daemon together using the
   supervisor's restart backoff. The foreground shell exits and a single
-  replacement launches. Apps launched through Triad survive manager recovery.
-  Use a foreground command in shell profiles so the manager can track it.
+  replacement launches. Apps launched through Triad survive manager recovery
+  and stay on their workspaces. Use a foreground command in shell profiles so
+  the manager can track it.
 - Suspend and resume the session; the live supervisor keeps ownership of the shell.
 
 If `river_window_manager_v1` is not advertised, Triad exits with a fatal log.
