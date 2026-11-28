@@ -71,7 +71,11 @@ const SupervisorRestartDelaysMs* = [200'i64, 1000, 2000, 5000, 15000, 30000]
 
 proc restartDelayMs*(status: int, runtimeSec: int64, rapidRestarts: int): int64 =
   if runtimeSec >= 30:
-    return if status == 0: SupervisorRestartDelaysMs[0] else: SupervisorRestartDelaysMs[1]
+    return
+      if status == 0:
+        SupervisorRestartDelaysMs[0]
+      else:
+        SupervisorRestartDelaysMs[1]
   let index = min(max(rapidRestarts + 1, 1), SupervisorRestartDelaysMs.high)
   SupervisorRestartDelaysMs[index]
 
